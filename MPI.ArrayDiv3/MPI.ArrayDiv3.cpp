@@ -5,106 +5,91 @@
 #include <stdio.h> 
 #include <stdlib.h> 
 #include <Windows.h>
+#include <iostream>
 
+using namespace std;
 
 // size of array 
-const int LENGTH = 10000;
+const int LENGTH = 12000;
 
-// Temporary array for slave process 
-int a2[1000];
+using namespace std;
 
 void init_array(int arr[])
 {
 	srand(GetTickCount64());
 	for (int i = 0; i < LENGTH; i++)
+	{
 		arr[i] = rand() % 100;
+	}
+}
+
+int sum_nonpp_func(int arr[]) {
+	int local = 0;
+	for (size_t i = 0; i < LENGTH; i++)
+	{
+		if (arr[i] % 3 == 0)
+		{
+			local += arr[i];
+		}
+	}
+	return local;
 }
 
 
 int main(int argc, char* argv[])
 {
-	int arrayOfElements[LENGTH];
-	init_array(arrayOfElements);
+	int array_of_elems[LENGTH], total_sum = 0, th_sum = 0;
+	init_array(array_of_elems);
 
-	int pid, np,
-		elements_per_process,
-		n_elements_recieved;
-	// np -> no. of processes 
-	// pid -> process id 
+	int sum_nopp_var = sum_nonpp_func(array_of_elems);
+	cout << "SUM OF ARRAY DIV 3 NOT PP: " << sum_nopp_var << endl;
 
-	MPI_Status status;
+	int th_num, th_rank;
+	unsigned int const min_block_size = 1000;
+	unsigned int const max_threads = (LENGTH + min_block_size - 1) / min_block_size;
 
-	// Creation of parallel processes 
+	MPI_Status Status;
 	MPI_Init(&argc, &argv);
+	MPI_Comm_size(MPI_COMM_WORLD, &th_num);
+	th_num = min(th_num != 0 ? th_num : 2, max_threads);
+	MPI_Comm_rank(MPI_COMM_WORLD, &th_rank);
 
-	// find out process ID, 
-	// and how many processes were started 
-	MPI_Comm_size(MPI_COMM_WORLD, &np);
-	MPI_Comm_rank(MPI_COMM_WORLD, &pid);
+	MPI_Bcast(array_of_elems, LENGTH, MPI_INT, 0, MPI_COMM_WORLD);
 
+	int chunk_size = LENGTH / th_num;
+	int left_ind = chunk_size * th_rank;
+	int right_ind = chunk_size * (th_rank + 1);
 
-	// master process 
-	if (pid == 0) {
-		int index, i;
-		elements_per_process = LENGTH / np;
-		unsigned int const minBlockSize = 1000;
-		unsigned int const maxThreads = (LENGTH + minBlockSize - 1) / minBlockSize;
-
-		// check if more than 1 processes are run 
-		if (np > 1) {
-			// distributes the portion of array 
-			// to child processes to calculate 
-			// their partial sums 
-			for (i = 1; i < np - 1; i++) {
-				index = i * elements_per_process;
-
-				MPI_Send(&elements_per_process, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
-				MPI_Send(&arrayOfElements[index], elements_per_process, MPI_INT, i, 0, MPI_COMM_WORLD);
-			}
-
-			// last process adds remaining elements 
-			index = i * elements_per_process;
-			int elementsLeft = LENGTH - index;
-
-			MPI_Send(&elementsLeft, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
-			MPI_Send(&arrayOfElements[index], elementsLeft, MPI_INT, i, 0, MPI_COMM_WORLD);
-		}
-
-		// master process add its own sub array 
-		int sum = 0;
-		for (i = 0; i < elements_per_process; i++)
-			sum += arrayOfElements[i];
-
-		// collects partial sums from other processes 
-		int tmp;
-		for (i = 1; i < np; i++) {
-			MPI_Recv(&tmp, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-			int sender = status.MPI_SOURCE;
-
-			sum += tmp;
-		}
-
-		// prints the final sum of array 
-		printf("Sum of array is : %d\n", sum);
-	}
-	else {	// slave processes 
-		MPI_Recv(&n_elements_recieved, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
-
-		// stores the received array segment 
-		// in local array a2 
-		MPI_Recv(&a2, n_elements_recieved, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
-
-		// calculates its partial sum 
-		int partial_sum = 0;
-		for (int i = 0; i < n_elements_recieved; i++)
-			partial_sum += a2[i];
-
-		// sends the partial sum to the root process 
-		MPI_Send(&partial_sum, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+	if (th_rank == th_num - 1) {
+		right_ind = LENGTH;
 	}
 
-	// cleans up all MPI state before exit of process 
+	for (int i = left_ind; i < right_ind; i++)
+	{
+		if (array_of_elems[i] % 3 == 0)
+		{
+			th_sum += array_of_elems[i];
+		}
+	}
+
+	if (th_rank == 0)
+	{
+		total_sum = th_sum;
+		for (int i = 1; i < th_num; i++)
+		{
+			MPI_Recv(&th_sum, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &Status);
+			total_sum = total_sum + th_sum;
+		}
+	}
+	else
+	{
+		MPI_Send(&th_sum, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+	}
+
+	if (th_rank == 0) {
+		cout << "SUM OF ARRAY DIV 3 PP: " << total_sum << endl;
+	}
+
 	MPI_Finalize();
-
 	return 0;
 }
